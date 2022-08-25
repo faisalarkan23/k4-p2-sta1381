@@ -1,0 +1,165 @@
+---
+title: "WEB SCRAPING"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::downcute:
+    self_contained: true
+    thumbnails: true
+    lightbox: true
+    gallery: true
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r message=FALSE, warning=FALSE}
+library(rvest)
+library(tidyverse)
+library(rio)
+library(kableExtra) 
+```
+
+Contoh laman web yang akan di scraping: `url = https://sinta.kemdikbud.go.id`
+
+# MASTER AUTHORS
+
+Untuk memperoleh list authors (pada kasus ini) dapat diperoleh dengan melakukan scrapping pada `url = https://sinta.kemdikbud.go.id/authors`. `Page` ini berisikan profil authors yang tidak detail dan bukan merupakan data tabular, setiap `page` berisi 10 authors.
+
+## Contoh Scraping: One Page
+
+```{r}
+universitas = 404
+page = 1
+url <- paste("https://sinta.kemdikbud.go.id/affiliations/authors/",universitas,"?page=",page,sep="")
+sinta <- read_html(url)
+html_nodes(sinta, "div.profile-name") %>%  html_text2()
+nama_authors <- html_nodes(sinta, ".profile-name") %>%  html_text2()
+nama_dept <- html_nodes(sinta, ".profile-dept") %>%  html_text2()
+SINTA_ID <- html_nodes(sinta, "div.profile-id")  %>%  html_text2() %>% gsub("ID : ", "", .)
+output <- cbind(SINTA_ID,nama_authors)
+output
+```
+
+## Contoh Scraping: Some Pages
+
+Untuk memperoleh authors selanjutnya, disediakan tombol `pagination` sehingga perlu dilakukan scrapping pada setiap `page` menggunakan fungsi pengulangan
+
+```{r}
+universitas = 404 # salah satu universitas
+page = 234 #scrapping hingga page ke-?
+df_master = data.frame()
+for(p in 1:page){
+  url <- paste("https://sinta.kemdikbud.go.id/affiliations/authors/",universitas,"?page=",p,sep="")
+  sinta <- read_html(url)
+  NAMA <- html_nodes(sinta, ".profile-name") %>%  html_text2()
+  SINTA_ID <- sinta %>% html_nodes("div.profile-id")  %>%  html_text2() %>% gsub("ID : ", "", .)
+  output <- cbind(SINTA_ID,NAMA)
+  df_master = rbind(df_master, output)
+  print(paste("srapping page", p))
+}
+head(df_master)
+tail(df_master)
+```
+
+```{r}
+rio::export(df_master, "Master_Authors_404.csv", sep=";")
+```
+
+
+# DETAIL AUTHORS
+
+Detail dari author dapat dilihat pada page '<https://sinta.kemdikbud.go.id/authors/profile/5973268>'. Number pada akhir url merupakan Profile ID atau SINTA ID. untuk mengetahui mengetahu SINTA ID dari authors maka pada kasus ini meenggunakan data master authors yang telah dilakukan scrapping sebelumnya.
+
+## Contoh Scraping: One Author
+
+```{r}
+i=5975362
+url <- paste("https://sinta.kemdikbud.go.id/authors/profile/",i,sep="")
+sinta <- read_html(url)
+nama_authors <- sinta %>% html_nodes("h3") %>% html_text2()
+meta_profile <- sinta %>% html_nodes("div.meta-profile") 
+meta_profile <- meta_profile %>% html_nodes("a")
+nama_univ <- meta_profile[1] %>% html_text2()
+nama_dept <- meta_profile[2] %>% html_text2()
+sinta_id <- meta_profile[3] %>% html_text2() %>% gsub("SINTA ID : ", "", .)
+subject_list <- sinta %>% html_nodes("div.profile-subject.mt-3")
+  subject_list <- subject_list %>% html_nodes("ul.subject-list")
+  subject_list <- subject_list %>% html_nodes("li")
+subject_list <- subject_list %>% html_text2()
+subject_list <- paste(subject_list, collapse= ", ")
+stat_profile <- sinta %>% html_nodes("div.pr-num")
+SINTA_Score_Overall <- stat_profile[1] %>% html_text2()
+SINTA_Score_3Yr <- stat_profile[2] %>% html_text2()
+Affil_Score <- stat_profile[3] %>% html_text2()
+Affil_Score_3Yr <- stat_profile[4] %>% html_text2()
+Table <- sinta %>%
+          html_nodes("table") %>% 
+          html_table(fill = FALSE) %>% .[[1]]
+data_Scopus <- cbind("Scopus_Artikel"=Table$Scopus[1],"Scopus_Citation"=Table$Scopus[2],"Scopus_CitedD"=Table$Scopus[3],"Scopus_HIndex"=Table$Scopus[4],"Scopus_i10Index"=Table$Scopus[5],"Scopus_GIndex"=Table$Scopus[6])
+data_GScholar <- cbind("GScholar_Artikel"=Table$GScholar[1],"GScholar_Citation"=Table$GScholar[2],"GScholar_CitedD"=Table$GScholar[3],"GScholar_HIndex"=Table$GScholar[4],"GScholar_i10Index"=Table$GScholar[5],"GScholar_GIndex"=Table$GScholar[6])
+data_WOS <- cbind("WOS_Artikel"=Table$WOS[1],"WOS_Citation"=Table$WOS[2],"WOS_CitedD"=Table$WOS[3],"WOS_HIndex"=Table$WOS[4],"WOS_i10Index"=Table$WOS[5],"WOS_GIndex"=Table$WOS[6])
+output = cbind(sinta_id,nama_authors,nama_univ,nama_dept,subject_list,
+           SINTA_Score_Overall,SINTA_Score_3Yr,
+           Affil_Score,Affil_Score_3Yr,
+           data_Scopus, data_GScholar, data_WOS)
+View(output)
+```
+
+## Contoh Scraping: Authors
+
+Secara umum proses scrapping pada `Detail Authors` sama dengan `Master Authors`. Adapun perbedaannya, pada `Detail Authors` tidak terdapat pagination sehingga scrapping cukup dilakukan dengan menggunakan pengulangan page berdasar Profile ID yang disematkan pada akhir url
+
+```{r}
+df_master<-read.csv("Master_Authors_404.csv",sep = ";") #akan digunakan sebagai ID untuk scrapping authors detail
+
+SINTA_ID=df_master$SINTA_ID[]
+df_authors = data.frame()
+
+for(i in SINTA_ID){
+  url <- paste("https://sinta.kemdikbud.go.id/authors/profile/",i,sep="")
+  sinta <- read_html(url)
+  nama_authors <- sinta %>% html_nodes("h3") %>% html_text2()
+  meta_profile <- sinta %>% html_nodes("div.meta-profile") 
+  meta_profile <- meta_profile %>% html_nodes("a")
+  nama_univ <- meta_profile[1] %>% html_text2()
+  nama_dept <- meta_profile[2] %>% html_text2()
+  sinta_id <- meta_profile[3] %>% html_text2() %>% gsub("SINTA ID : ", "", .)
+ subject_list <- sinta %>% html_nodes("div.profile-subject.mt-3")
+  subject_list <- subject_list %>% html_nodes("ul.subject-list")
+  subject_list <- subject_list %>% html_nodes("li")
+subject_list <- subject_list %>% html_text2()
+subject_list <- paste(subject_list, collapse= ", ")
+  stat_profile <- sinta %>% html_nodes("div.pr-num")
+  SINTA_Score_Overall <- stat_profile[1] %>% html_text2()
+  SINTA_Score_3Yr <- stat_profile[2] %>% html_text2()
+  Affil_Score <- stat_profile[3] %>% html_text2()
+  Affil_Score_3Yr <- stat_profile[4] %>% html_text2()
+  Table <- sinta %>%
+            html_nodes("table") %>% 
+            html_table(fill = FALSE) %>% .[[1]]
+  data_Scopus <- rbind(Table$Scopus)
+  data_GScholar <- rbind(Table$GScholar)
+  data_WOS <- rbind(Table$WOS)
+  vektor = c(sinta_id,nama_authors,nama_univ,nama_dept,subject_list,
+             SINTA_Score_Overall,SINTA_Score_3Yr,
+             Affil_Score,Affil_Score_3Yr,data_Scopus, data_GScholar, data_WOS)
+  df_authors = rbind(df_authors, vektor)
+  print(paste("srapping page", i)) 
+}
+colnames(df_authors) <- 
+    c("SINTA_ID","Nama","Universitas","Departemen","Subject List","SINTA_Score_Overall","SINTA_Score_3Yr",
+     "Affil_Score","Affil_Score_3Yr","Scopus_Artikel","Scopus_Citation","Scopus_CitedD","Scopus_H_Index","Scopus_i10Index","Scopus_GIndex",
+    "GScholar_Artikel","GScholar_Citation","GScholar_CitedD","GScholar_H_Index","GScholar_i10Index","GScholar_GIndex","WOS_Artikel","WOS_Citation","WOS_CitedD","WOS_H_Index","WOS_i10Index","WOS_GIndex")
+
+head(df_authors)
+tail(df_authors)
+```
+
+
+```{r}
+rio::export(df_authors, "D:\\Kuliah\\Semester 5\\STA1381 Pengantar Sains Data\\Detail_Authors_404.csv") 
+```
+
